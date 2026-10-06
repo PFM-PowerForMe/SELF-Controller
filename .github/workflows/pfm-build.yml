@@ -23,4 +23,4 @@ jobs:
     uses: PFM-PowerForMe/PFM-Action-Public/.github/workflows/custom-container-build.yml@main
     with:
       build_use_tag: false
-      # dispatch_repos: '["PFM-PowerForMe/STD-HubProxy", "PFM-PowerForMe/S6-Debian-PHP"]'
+      dispatch_repos: '["PFM-PowerForMe/STD-Vaultwarden"]'
