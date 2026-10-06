@@ -1,12 +1,8 @@
-# 构建时
 FROM docker.io/library/golang:alpine AS builder
 ARG REPO
-# eg. amd64 | arm64
 ARG ARCH
-# eg. x86_64 | aarch64
 ARG CPU_ARCH
-ARG TAG
-# eg. latest
+ARG TAG=dev
 ARG IMAGE_VERSION
 ENV REPO=$REPO \
      ARCH=$ARCH \
@@ -20,11 +16,10 @@ ENV CGO_ENABLED=0 \
 
 WORKDIR /output/
 WORKDIR /source/
-COPY source-src/src/ .
+COPY source-src/src/ ./
 RUN go mod download
-RUN go build -o /output/autobackup -trimpath -ldflags="-w -s" main.go
+RUN go build -o /output/controller -trimpath -ldflags="-w -s -X main.version=${TAG}" .
 
-
-# 运行时
 FROM scratch AS runtime
-COPY --from=builder /output/autobackup /usr/bin/autobackup
+COPY --from=builder /output/controller /usr/bin/controller
+ENTRYPOINT ["/usr/bin/controller"]
