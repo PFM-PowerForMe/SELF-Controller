@@ -19,7 +19,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/ProtonMail/go-crypto/openpgp"
+	openpgp "github.com/ProtonMail/go-crypto/openpgp/v2"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 )
 
@@ -321,26 +321,30 @@ func createEncryptedArchive(sourceDir string, outFile string, pubKeyBase64 strin
 		return fmt.Errorf("未找到有效的 GPG 公钥")
 	}
 
+	archiveFile := outFile + ".tar.gz"
+	if err := writeArchive(sourceDir, archiveFile); err != nil {
+		return err
+	}
+	defer os.Remove(archiveFile)
+
+	if err := verifyArchive(archiveFile); err != nil {
+		return err
+	}
+	return encryptArchive(archiveFile, outFile, entityList)
+}
+
+func writeArchive(sourceDir string, outFile string) error {
 	f, err := os.Create(outFile)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	pgpWriter, err := openpgp.Encrypt(f, entityList, nil, nil, nil)
-	if err != nil {
-		return fmt.Errorf("初始化 GPG 加密流失败: %v", err)
-	}
-	defer pgpWriter.Close()
-
-	gzWriter := gzip.NewWriter(pgpWriter)
-	defer gzWriter.Close()
-
+	gzWriter := gzip.NewWriter(f)
 	tarWriter := tar.NewWriter(gzWriter)
-	defer tarWriter.Close()
 
-	logger.Printf("开始打包并加密目录: %s", sourceDir)
-	return filepath.Walk(sourceDir, func(file string, fi os.FileInfo, err error) error {
+	logger.Printf("开始打包目录: %s", sourceDir)
+	if err := filepath.Walk(sourceDir, func(file string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -373,7 +377,80 @@ func createEncryptedArchive(sourceDir string, outFile string, pubKeyBase64 strin
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if err := tarWriter.Close(); err != nil {
+		return err
+	}
+	if err := gzWriter.Close(); err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+func verifyArchive(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gzReader, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("归档自检失败: %v", err)
+	}
+	defer gzReader.Close()
+
+	size, err := io.Copy(io.Discard, gzReader)
+	if err != nil {
+		return fmt.Errorf("归档自检失败: %v", err)
+	}
+	logger.Printf("归档自检通过: %s (%d 字节)", path, size)
+	return nil
+}
+
+func encryptArchive(archiveFile string, outFile string, recipients openpgp.EntityList) error {
+	src, err := os.Open(archiveFile)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(outFile)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	pgpWriter, err := openpgp.Encrypt(dst, recipients, nil, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("初始化 GPG 加密流失败: %v", err)
+	}
+	if _, err := io.Copy(pgpWriter, src); err != nil {
+		pgpWriter.Close()
+		return err
+	}
+	if err := pgpWriter.Close(); err != nil {
+		return fmt.Errorf("结束 GPG 加密流失败: %v", err)
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+
+	srcInfo, err := os.Stat(archiveFile)
+	if err != nil {
+		return err
+	}
+	dstInfo, err := os.Stat(outFile)
+	if err != nil {
+		return err
+	}
+	if dstInfo.Size() <= srcInfo.Size() {
+		return fmt.Errorf("加密结果体积异常: %d 字节, 不大于归档的 %d 字节", dstInfo.Size(), srcInfo.Size())
+	}
+	logger.Printf("已加密: %s (%d 字节 -> %d 字节)", outFile, srcInfo.Size(), dstInfo.Size())
+	return nil
 }
 
 func pushLogs(cfg *Config) {

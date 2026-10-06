@@ -85,4 +85,16 @@ base64 -w 0 my_pub_key.asc
 
 ```bash
 gpg --output test.tar.gz --decrypt test.tar.gz.gpg
+gzip -t test.tar.gz      # 必须无输出，有报错说明这份备份不能用
+tar -xzf test.tar.gz -C /tmp/restore
 ```
+
+## 备份自检
+
+一轮备份分三步，任一步失败都会报错退出、不会上传：
+
+1. 打包成 `tar.gz`；
+2. **回读自检**：完整解压一遍，校验 gzip 完整性（deflate 流损坏、CRC/长度不符都会被抓到），日志打 `归档自检通过`；
+3. 加密：归档先落地再加密（不再把 gzip 的小块写入直接喂给加密流），完成后检查密文体积不小于归档，日志打 `已加密`。
+
+看到 `归档自检通过` 与 `已加密` 才代表这一轮产出可用；`gzip -t` 是恢复前最后一道检查。
